@@ -16,6 +16,7 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
   const [loading, setLoading] = useState(false)
   const [resendCooldown, setResendCooldown] = useState(0)
   const [githubConfigured, setGithubConfigured] = useState(false)
+  const [oidcConfigured, setOidcConfigured] = useState(false)
   const [emailError, setEmailError] = useState('')
   const [isReturning] = useState(() => localStorage.getItem('idswyft:has-session') === 'true')
 
@@ -25,15 +26,19 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
     Array.from({ length: 6 }, () => React.createRef<HTMLInputElement>())
   ).current
 
-  // Check if GitHub OAuth is configured
+  // Check if GitHub OAuth and OIDC SSO are configured
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/auth/developer/github/url?state=check`, { credentials: 'include' })
       .then(r => r.json())
       .then(d => setGithubConfigured(d.configured === true))
       .catch(() => {})
+    fetch(`${API_BASE_URL}/api/auth/developer/oidc/url?state=check`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(d => setOidcConfigured(d.configured === true))
+      .catch(() => {})
   }, [])
 
-  // Handle GitHub callback from URL params
+  // Handle OAuth/OIDC callback from URL params (GitHub or generic OIDC)
   useEffect(() => {
     const params = new URLSearchParams(window.location.search)
     const code = params.get('code')
@@ -43,16 +48,21 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
     // Clear URL immediately to prevent re-firing on effect re-run
     window.history.replaceState({}, '', window.location.pathname)
 
-    // Verify OAuth state to prevent CSRF
-    const storedState = sessionStorage.getItem('github_oauth_state')
+    // Verify OAuth state to prevent CSRF — whichever flow stored its state wins
+    const githubState = sessionStorage.getItem('github_oauth_state')
+    const oidcState = sessionStorage.getItem('oidc_oauth_state')
     sessionStorage.removeItem('github_oauth_state')
-    if (!returnedState || returnedState !== storedState) {
+    sessionStorage.removeItem('oidc_oauth_state')
+
+    const isOidc = !!oidcState && returnedState === oidcState
+    const isGithub = !!githubState && returnedState === githubState
+    if (!returnedState || (!isOidc && !isGithub)) {
       toast.error('OAuth state mismatch. Please try again.')
       return
     }
 
     setLoading(true)
-    fetch(`${API_BASE_URL}/api/auth/developer/github/callback`, {
+    fetch(`${API_BASE_URL}/api/auth/developer/${isOidc ? 'oidc' : 'github'}/callback`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', ...csrfHeader() },
       credentials: 'include',
@@ -60,12 +70,12 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
     })
       .then(r => r.json().then(data => ({ ok: r.ok, data })))
       .then(({ ok, data }) => {
-        if (!ok) throw new Error(data.message || 'GitHub login failed')
+        if (!ok) throw new Error(data.message || (isOidc ? 'SSO login failed' : 'GitHub login failed'))
         markReturning()
         onAuth('session', data.api_key?.key)
       })
       .catch((err: unknown) => {
-        toast.error(err instanceof Error ? err.message : 'GitHub login failed')
+        toast.error(err instanceof Error ? err.message : 'Login failed')
       })
       .finally(() => setLoading(false))
   }, [onAuth])
@@ -225,6 +235,20 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
     }
   }
 
+  const startOidc = async () => {
+    setLoading(true)
+    try {
+      const res = await fetch(`${API_BASE_URL}/api/auth/developer/oidc/url`, { credentials: 'include' })
+      const data = await res.json()
+      if (!data.url) throw new Error('OIDC SSO not configured')
+      sessionStorage.setItem('oidc_oauth_state', data.state)
+      window.location.href = data.url
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'SSO login failed')
+      setLoading(false)
+    }
+  }
+
   const digitInputStyle: React.CSSProperties = {
     width: 44, height: 52, textAlign: 'center', fontSize: 22, fontWeight: 600,
     fontFamily: C.mono, background: C.surface, border: `1px solid ${C.border}`,
@@ -238,31 +262,49 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
           idswyft / developer-portal
         </div>
 
-        {/* -- Step 1: Enter email -- */}
+        {/* -- Step 1: Enter email (or SSO-only when OIDC is enforced) -- */}
         {step === 'enter_email' && (
           <>
             <h1 style={{ fontFamily: C.mono, fontSize: 22, fontWeight: 600, color: C.text, marginBottom: 8 }}>
               {isReturning ? 'Sign in' : 'Sign up'}
             </h1>
             <p style={{ color: C.muted, fontSize: 14, marginBottom: 28 }}>
-              {isReturning ? 'Enter your email to get a verification code' : 'Enter your email to create a developer account'}
+              {oidcConfigured
+                ? 'Sign in with your organization SSO to continue'
+                : isReturning ? 'Enter your email to get a verification code' : 'Enter your email to create a developer account'}
             </p>
-            <form onSubmit={e => { e.preventDefault(); sendOtp() }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, ...(emailError ? { borderColor: C.red } : {}) }} type="email" value={email} onChange={e => { setEmail(e.target.value); setEmailError('') }} placeholder="you@example.com" required autoFocus />
-                {emailError && <p style={{ color: C.red, fontSize: 12, margin: '4px 0 0' }}>{emailError}</p>}
-              </div>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{ background: C.cyan, color: C.bg, borderRadius: 8, padding: '11px 0', fontWeight: 600, fontSize: 14, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
-              >
-                {loading ? 'Sending code...' : 'Continue with Email'}
-              </button>
-            </form>
 
-            {githubConfigured && (
+            {/* When OIDC SSO is configured it is the only developer auth method
+                (the backend rejects the email-OTP endpoints in that mode). */}
+            {!oidcConfigured && (
+              <form onSubmit={e => { e.preventDefault(); sendOtp() }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={labelStyle}>Email</label>
+                  <input style={{ ...inputStyle, ...(emailError ? { borderColor: C.red } : {}) }} type="email" value={email} onChange={e => { setEmail(e.target.value); setEmailError('') }} placeholder="you@example.com" required autoFocus />
+                  {emailError && <p style={{ color: C.red, fontSize: 12, margin: '4px 0 0' }}>{emailError}</p>}
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{ background: C.cyan, color: C.bg, borderRadius: 8, padding: '11px 0', fontWeight: 600, fontSize: 14, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
+                >
+                  {loading ? 'Sending code...' : 'Continue with Email'}
+                </button>
+              </form>
+            )}
+
+            {oidcConfigured && (
+              <button
+                onClick={startOidc}
+                disabled={loading}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.cyan, color: C.bg, border: 'none', borderRadius: 8, padding: '11px 0', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600 }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-1a8 8 0 0 1 16 0v1"></path></svg>
+                Continue with SSO
+              </button>
+            )}
+
+            {!oidcConfigured && githubConfigured && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
                   <div style={{ flex: 1, height: 1, background: C.border }} />
@@ -280,7 +322,7 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
               </>
             )}
 
-            {!isReturning && (
+            {!oidcConfigured && !isReturning && (
               <p style={{ color: C.dim, fontSize: 12, textAlign: 'center', marginTop: 16 }}>
                 Already have an account? Just enter your email above.
               </p>

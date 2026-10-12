@@ -136,21 +136,49 @@ The `install.sh` script does not auto-populate `FRONTEND_URL` when you choose a 
 
 ### Email (OTP login, credential delivery)
 
-Idswyft sends developer-portal login codes and verified credential emails through **Resend** — there is no SMTP path. Self-hosters need a Resend account (free tier covers small deployments) to receive OTP codes; without it, OTP codes are logged to the API container's stdout for testing-only use.
+Idswyft sends developer-portal login codes and verified credential emails through **SMTP** (any mail server) or **Resend** (managed email API). SMTP is used automatically when `SMTP_HOST` is set; otherwise Resend is used when `RESEND_API_KEY` is set.
 
 ```bash
-# In .env — required for email-based OTP login on self-host
+# Option A — SMTP (in .env)
+SMTP_HOST=smtp.yourdomain.com
+SMTP_PORT=587                # 587 STARTTLS (default), or 465 with SMTP_SECURE=true
+SMTP_SECURE=false
+SMTP_USER=your_smtp_username
+SMTP_PASS=your_smtp_password
+EMAIL_FROM=noreply@yourdomain.com
+
+# Option B — Resend (in .env)
 RESEND_API_KEY=re_your_key_here
 EMAIL_FROM=noreply@yourdomain.com
 ```
 
-Steps:
+Steps (Resend):
 1. Sign up at <https://resend.com> (free tier covers small self-hosts).
 2. Verify a sending domain in the Resend dashboard.
 3. Set `RESEND_API_KEY` and `EMAIL_FROM` in `.env`, then `docker compose up -d` to restart the API.
-4. To inspect logged OTPs while Resend is not yet configured: `docker compose logs api | grep -i OTP`.
+4. To inspect logged OTPs while no email transport is configured: `docker compose logs api | grep -i OTP`.
 
 There is no built-in registration allowlist (no `ALLOWED_ADMIN_EMAILS` / `AUTH_WHITELIST_EMAILS` — those don't exist; AI assistants sometimes hallucinate these). To restrict who can register, front the API with a reverse proxy that allowlists by IP or basic-auth, or open a feature request if a built-in allowlist would help your deployment.
+
+### Developer portal SSO (OpenID Connect)
+
+Instead of email OTP codes, developers can sign in to the developer portal with any OpenID Connect provider (Keycloak, Authentik, Auth0, Okta, Azure AD, Dex, …). **When OIDC is configured it is enforced as the only developer sign-in method** — the portal shows SSO instead of the email form, and the email-OTP API endpoints are disabled so the identity provider stays the single source of truth. When OIDC is not configured, the standard email-code flow is used.
+
+```bash
+# In .env
+OIDC_ISSUER_URL=https://sso.yourdomain.com/realms/yourrealm   # issuer URL, no trailing slash
+OIDC_CLIENT_ID=idswyft-developer-portal
+OIDC_CLIENT_SECRET=                    # optional for public clients (PKCE is always used)
+OIDC_REDIRECT_URI=http://localhost/    # your frontend origin — must match a redirect URI registered with the provider
+OIDC_SCOPES=openid email profile
+```
+
+Notes:
+- Register `OIDC_REDIRECT_URI` as an allowed redirect/callback URI in your provider's client settings. It points at the developer portal page itself (the page reads `?code&state` from the URL after redirect).
+- The provider must expose a standard `.well-known/openid-configuration` document and RS256- or ES256-signed ID tokens.
+- New developers are auto-provisioned on first SSO login (email must be returned by the provider); existing accounts are linked by email on first SSO sign-in.
+- Reviewer and admin logins are unaffected — OIDC enforcement applies to the developer portal only.
+- Restart the API after changing these values: `docker compose up -d`.
 
 ### Backup & Restore
 
