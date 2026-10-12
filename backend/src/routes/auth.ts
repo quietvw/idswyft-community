@@ -12,6 +12,7 @@ import { validate } from '@/middleware/validate.js';
 import { TotpService } from '@/services/totpService.js';
 import { createAndSendOtp, verifyOtp } from '@/services/otpService.js';
 import * as githubOAuth from '@/services/githubOAuthService.js';
+import * as oidc from '@/services/oidcService.js';
 import { Developer } from '@/types/index.js';
 import { logger } from '@/utils/logger.js';
 import { generateToken } from '@/middleware/csrf.js';
@@ -668,6 +669,176 @@ router.get('/developer/github/url',
 
     const url = githubOAuth.getAuthorizationUrl(state);
     res.json({ url, state, configured: true });
+  })
+);
+
+// ─── OpenID Connect (generic SSO) ────────────────────────────────────────────
+
+// GET /api/auth/developer/oidc/url — return the OIDC authorization URL
+router.get('/developer/oidc/url',
+  catchAsync(async (req: Request, res: Response) => {
+    if (!oidc.isOidcConfigured()) {
+      return res.json({ url: null, configured: false });
+    }
+
+    // HMAC-signed state carries the nonce + PKCE verifier (no server storage needed)
+    const state = oidc.generateOidcState();
+    const url = await oidc.getAuthorizationUrl(state);
+    res.json({ url, state, configured: true });
+  })
+);
+
+// POST /api/auth/developer/oidc/callback — exchange OIDC code for session
+router.post('/developer/oidc/callback',
+  [
+    body('code').isString().isLength({ min: 4, max: 2048 }).withMessage('Invalid OIDC authorization code'),
+    body('state').isString().notEmpty().withMessage('OAuth state parameter is required'),
+  ],
+  validate,
+  catchAsync(async (req: Request, res: Response) => {
+    if (!oidc.isOidcConfigured()) {
+      throw new AuthenticationError('OIDC authentication is not configured');
+    }
+
+    const { code, state } = req.body;
+    // Verifies state, exchanges the code (PKCE), and validates the ID token
+    const identity = await oidc.authenticateWithCode(code, state);
+
+    // Try to find developer by OIDC subject first, then by email
+    let developer: Developer | null = null;
+    let isNew = false;
+
+    const { data: bySubject } = await supabase
+      .from('developers')
+      .select('*')
+      .eq('oidc_subject', identity.subject)
+      .single();
+
+    if (bySubject) {
+      developer = bySubject as Developer;
+      // Update avatar if changed
+      if (identity.picture && identity.picture !== developer.avatar_url) {
+        await supabase.from('developers').update({ avatar_url: identity.picture }).eq('id', developer.id);
+      }
+    } else {
+      // Try by email
+      const { data: byEmail } = await supabase
+        .from('developers')
+        .select('*')
+        .eq('email', identity.email)
+        .eq('is_verified', true)
+        .single();
+
+      if (byEmail) {
+        // Link OIDC identity to existing account
+        developer = byEmail as Developer;
+        await supabase.from('developers')
+          .update({ oidc_subject: identity.subject, avatar_url: identity.picture ?? developer.avatar_url })
+          .eq('id', developer.id);
+      } else {
+        // Auto-register new developer via OIDC
+        const { data: newDev, error: createError } = await supabase
+          .from('developers')
+          .insert({
+            email: identity.email,
+            name: identity.name || identity.email.split('@')[0],
+            company: null,
+            oidc_subject: identity.subject,
+            avatar_url: identity.picture || null,
+            is_verified: true,
+          })
+          .select('*')
+          .single();
+
+        if (createError) {
+          // Handle race condition: another request created the account concurrently
+          if (createError.code === '23505') {
+            const { data: existing } = await supabase
+              .from('developers')
+              .select('*')
+              .eq('email', identity.email)
+              .single();
+            if (existing) {
+              developer = existing as Developer;
+              await supabase.from('developers')
+                .update({ oidc_subject: identity.subject, avatar_url: identity.picture ?? developer.avatar_url })
+                .eq('id', developer.id);
+              // Fall through to existing-developer login below
+            } else {
+              throw new Error('Failed to create developer account');
+            }
+          } else {
+            logger.error('OIDC auto-registration failed', { error: createError });
+            throw new Error('Failed to create developer account');
+          }
+        } else if (newDev) {
+          developer = newDev as Developer;
+          isNew = true;
+
+          // Create initial API key for new OIDC users
+          const { key, hash, prefix } = generateAPIKey();
+          const isProductionEnv = process.env.NODE_ENV === 'production';
+
+          const { data: apiKey } = await supabase
+            .from('api_keys')
+            .insert({
+              developer_id: developer.id,
+              key_hash: hash,
+              key_prefix: prefix,
+              name: 'Default API Key',
+              is_sandbox: !isProductionEnv,
+            })
+            .select('id, name, is_sandbox, created_at')
+            .single();
+
+          logger.info('New developer registered via OIDC', {
+            developerId: developer.id,
+            email: identity.email,
+            oidcSubject: identity.subject,
+            apiKeyId: apiKey?.id,
+          });
+
+          const token = generateDeveloperToken(developer);
+          setAuthCookie(res, token);
+          return res.status(201).json({
+            token,
+            developer: {
+              id: developer.id,
+              email: developer.email,
+              name: developer.name,
+              company: developer.company,
+              is_verified: developer.is_verified,
+              avatar_url: resolvePublicAssetUrl(developer.avatar_url),
+              created_at: developer.created_at,
+            },
+            api_key: apiKey ? { key, id: apiKey.id, name: apiKey.name, is_sandbox: apiKey.is_sandbox, created_at: apiKey.created_at } : undefined,
+            is_new: true,
+          });
+        }
+      }
+    }
+
+    // Existing developer login
+    if (!developer) {
+      throw new Error('Failed to resolve developer account');
+    }
+    const token = generateDeveloperToken(developer);
+    setAuthCookie(res, token);
+    logger.info('Developer logged in via OIDC', { developerId: developer.id, oidcSubject: identity.subject });
+
+    res.json({
+      token,
+      developer: {
+        id: developer.id,
+        email: developer.email,
+        name: developer.name,
+        company: developer.company,
+        is_verified: developer.is_verified,
+        avatar_url: resolvePublicAssetUrl(developer.avatar_url),
+        created_at: developer.created_at,
+      },
+      is_new: isNew,
+    });
   })
 );
 

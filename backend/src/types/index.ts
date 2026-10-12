@@ -129,6 +129,7 @@ export interface Developer {
   sandbox_webhook_url?: string;
   is_verified: boolean;
   github_id?: number;
+  oidc_subject?: string;
   avatar_url?: string;
   status?: 'active' | 'suspended';
   created_at: Date;
@@ -338,13 +339,28 @@ export interface AppConfig {
     customFaceEndpoint?: string;
   };
   email: {
+    transport: 'resend' | 'smtp';
     resendApiKey: string;
     fromAddress: string;
+    smtp: {
+      host: string;
+      port: number;
+      secure: boolean;
+      user: string;
+      pass: string;
+    };
   };
   github: {
     clientId: string;
     clientSecret: string;
     redirectUri: string;
+  };
+  oidc: {
+    issuerUrl: string;
+    clientId: string;
+    clientSecret: string;
+    redirectUri: string;
+    scopes: string;
   };
 }
 

@@ -105,14 +105,34 @@ export const config: AppConfig = {
   },
 
   email: {
+    // Transport selection: 'smtp' when SMTP_HOST is set, otherwise Resend when
+    // RESEND_API_KEY is set. EMAIL_TRANSPORT can force the choice.
+    transport: (process.env.EMAIL_TRANSPORT || (process.env.SMTP_HOST ? 'smtp' : 'resend')) as 'resend' | 'smtp',
     resendApiKey: process.env.RESEND_API_KEY || '',
     fromAddress: process.env.EMAIL_FROM || 'Idswyft <team@mail.idswyft.app>',
+    smtp: {
+      host: process.env.SMTP_HOST || '',
+      port: parseInt(process.env.SMTP_PORT || '587'),
+      secure: process.env.SMTP_SECURE === 'true',
+      user: process.env.SMTP_USER || '',
+      pass: process.env.SMTP_PASS || '',
+    },
   },
 
   github: {
     clientId: process.env.GITHUB_CLIENT_ID || '',
     clientSecret: process.env.GITHUB_CLIENT_SECRET || '',
     redirectUri: process.env.GITHUB_REDIRECT_URI || 'https://www.idswyft.app/developer',
+  },
+
+  // Generic OpenID Connect login for the developer portal (alternative to
+  // email OTP). Configured when OIDC_ISSUER_URL and OIDC_CLIENT_ID are set.
+  oidc: {
+    issuerUrl: (process.env.OIDC_ISSUER_URL || '').replace(/\/+$/, ''),
+    clientId: process.env.OIDC_CLIENT_ID || '',
+    clientSecret: process.env.OIDC_CLIENT_SECRET || '',
+    redirectUri: process.env.OIDC_REDIRECT_URI || '',
+    scopes: process.env.OIDC_SCOPES || 'openid email profile',
   }
 };
 

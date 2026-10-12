@@ -102,6 +102,21 @@ services:
       MIGRATIONS_LENIENT: "true"
       ENGINE_URL: http://engine:3002
       WATCHTOWER_API_TOKEN: "${WATCHTOWER_API_TOKEN:-}"
+      # Email delivery (SMTP preferred when SMTP_HOST is set; Resend as fallback)
+      EMAIL_TRANSPORT: "${EMAIL_TRANSPORT:-}"
+      SMTP_HOST: "${SMTP_HOST:-}"
+      SMTP_PORT: "${SMTP_PORT:-}"
+      SMTP_SECURE: "${SMTP_SECURE:-}"
+      SMTP_USER: "${SMTP_USER:-}"
+      SMTP_PASS: "${SMTP_PASS:-}"
+      EMAIL_FROM: "${EMAIL_FROM:-}"
+      RESEND_API_KEY: "${RESEND_API_KEY:-}"
+      # Developer portal SSO via OpenID Connect (optional)
+      OIDC_ISSUER_URL: "${OIDC_ISSUER_URL:-}"
+      OIDC_CLIENT_ID: "${OIDC_CLIENT_ID:-}"
+      OIDC_CLIENT_SECRET: "${OIDC_CLIENT_SECRET:-}"
+      OIDC_REDIRECT_URI: "${OIDC_REDIRECT_URI:-}"
+      OIDC_SCOPES: "${OIDC_SCOPES:-}"
     volumes:
       - uploads:/app/backend/uploads
       - temp:/app/backend/temp

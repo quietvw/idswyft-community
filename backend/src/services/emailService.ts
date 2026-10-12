@@ -1,3 +1,4 @@
+import nodemailer, { Transporter } from 'nodemailer';
 import { logger } from '@/utils/logger.js';
 import config from '@/config/index.js';
 
@@ -30,23 +31,40 @@ interface SendEmailOptions {
   text: string;
 }
 
-class EmailService {
+export class EmailService {
   private resendApiKey: string;
   private fromAddress: string;
+  private transport: 'resend' | 'smtp';
+  private smtpTransporter: Transporter | null = null;
   private _isConfigured: boolean;
 
-  /** Whether a real email transport (Resend) is configured */
+  /** Whether a real email transport (SMTP or Resend) is configured */
   get isConfigured(): boolean { return this._isConfigured; }
 
   constructor() {
     this.resendApiKey = config.email.resendApiKey;
     this.fromAddress = config.email.fromAddress;
-    this._isConfigured = !!this.resendApiKey;
 
-    if (this._isConfigured) {
-      logger.info(`Email service configured (from: ${this.fromAddress})`);
+    const smtp = config.email.smtp;
+    const smtpConfigured = !!smtp.host;
+    this.transport = smtpConfigured ? 'smtp' : config.email.transport;
+
+    if (this.transport === 'smtp' && smtpConfigured) {
+      this.smtpTransporter = nodemailer.createTransport({
+        host: smtp.host,
+        port: smtp.port,
+        secure: smtp.secure,
+        auth: smtp.user ? { user: smtp.user, pass: smtp.pass } : undefined,
+      });
+      this._isConfigured = true;
+      logger.info(`Email service configured via SMTP (host: ${smtp.host}:${smtp.port}, from: ${this.fromAddress})`);
     } else {
-      logger.warn('Resend not configured — OTP codes will be logged to console');
+      this._isConfigured = !!this.resendApiKey;
+      if (this._isConfigured) {
+        logger.info(`Email service configured via Resend (from: ${this.fromAddress})`);
+      } else {
+        logger.warn('No email transport configured (SMTP or Resend) — OTP codes will be logged to console');
+      }
     }
   }
 
@@ -57,6 +75,30 @@ class EmailService {
       return true;
     }
 
+    if (this.smtpTransporter) {
+      return this.sendViaSmtp(options);
+    }
+    return this.sendViaResend(options);
+  }
+
+  private async sendViaSmtp(options: SendEmailOptions): Promise<boolean> {
+    try {
+      const result = await this.smtpTransporter!.sendMail({
+        from: this.fromAddress,
+        to: options.to,
+        subject: options.subject,
+        html: options.html,
+        text: options.text,
+      });
+      logger.info(`Email sent via SMTP: ${result.messageId}`);
+      return true;
+    } catch (error) {
+      logger.error('SMTP send failed:', error instanceof Error ? error.message : String(error));
+      return false;
+    }
+  }
+
+  private async sendViaResend(options: SendEmailOptions): Promise<boolean> {
     try {
       const response = await fetch('https://api.resend.com/emails', {
         method: 'POST',
