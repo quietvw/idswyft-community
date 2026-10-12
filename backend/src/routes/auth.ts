@@ -807,7 +807,7 @@ router.post('/developer/oidc/callback',
             developerId: developer.id,
             email: identity.email,
             oidcSubject: identity.subject,
-            apiKeyId: apiKey?.id,
+            hasApiKey: !!apiKey,
           });
 
           const token = generateDeveloperToken(developer);
