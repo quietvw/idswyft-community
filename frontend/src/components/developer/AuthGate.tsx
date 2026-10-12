@@ -262,61 +262,67 @@ export function AuthGate({ onAuth }: { onAuth: (token: string, apiKey?: string) 
           idswyft / developer-portal
         </div>
 
-        {/* -- Step 1: Enter email -- */}
+        {/* -- Step 1: Enter email (or SSO-only when OIDC is enforced) -- */}
         {step === 'enter_email' && (
           <>
             <h1 style={{ fontFamily: C.mono, fontSize: 22, fontWeight: 600, color: C.text, marginBottom: 8 }}>
               {isReturning ? 'Sign in' : 'Sign up'}
             </h1>
             <p style={{ color: C.muted, fontSize: 14, marginBottom: 28 }}>
-              {isReturning ? 'Enter your email to get a verification code' : 'Enter your email to create a developer account'}
+              {oidcConfigured
+                ? 'Sign in with your organization SSO to continue'
+                : isReturning ? 'Enter your email to get a verification code' : 'Enter your email to create a developer account'}
             </p>
-            <form onSubmit={e => { e.preventDefault(); sendOtp() }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-              <div>
-                <label style={labelStyle}>Email</label>
-                <input style={{ ...inputStyle, ...(emailError ? { borderColor: C.red } : {}) }} type="email" value={email} onChange={e => { setEmail(e.target.value); setEmailError('') }} placeholder="you@example.com" required autoFocus />
-                {emailError && <p style={{ color: C.red, fontSize: 12, margin: '4px 0 0' }}>{emailError}</p>}
-              </div>
-              <button
-                type="submit"
-                disabled={loading}
-                style={{ background: C.cyan, color: C.bg, borderRadius: 8, padding: '11px 0', fontWeight: 600, fontSize: 14, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
-              >
-                {loading ? 'Sending code...' : 'Continue with Email'}
-              </button>
-            </form>
 
-            {(githubConfigured || oidcConfigured) && (
+            {/* When OIDC SSO is configured it is the only developer auth method
+                (the backend rejects the email-OTP endpoints in that mode). */}
+            {!oidcConfigured && (
+              <form onSubmit={e => { e.preventDefault(); sendOtp() }} style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div>
+                  <label style={labelStyle}>Email</label>
+                  <input style={{ ...inputStyle, ...(emailError ? { borderColor: C.red } : {}) }} type="email" value={email} onChange={e => { setEmail(e.target.value); setEmailError('') }} placeholder="you@example.com" required autoFocus />
+                  {emailError && <p style={{ color: C.red, fontSize: 12, margin: '4px 0 0' }}>{emailError}</p>}
+                </div>
+                <button
+                  type="submit"
+                  disabled={loading}
+                  style={{ background: C.cyan, color: C.bg, borderRadius: 8, padding: '11px 0', fontWeight: 600, fontSize: 14, border: 'none', cursor: loading ? 'not-allowed' : 'pointer', opacity: loading ? 0.7 : 1 }}
+                >
+                  {loading ? 'Sending code...' : 'Continue with Email'}
+                </button>
+              </form>
+            )}
+
+            {oidcConfigured && (
+              <button
+                onClick={startOidc}
+                disabled={loading}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.cyan, color: C.bg, border: 'none', borderRadius: 8, padding: '11px 0', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 600 }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-1a8 8 0 0 1 16 0v1"></path></svg>
+                Continue with SSO
+              </button>
+            )}
+
+            {!oidcConfigured && githubConfigured && (
               <>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '20px 0' }}>
                   <div style={{ flex: 1, height: 1, background: C.border }} />
                   <span style={{ color: C.dim, fontSize: 12 }}>or</span>
                   <div style={{ flex: 1, height: 1, background: C.border }} />
                 </div>
-                {githubConfigured && (
-                  <button
-                    onClick={startGitHub}
-                    disabled={loading}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8, padding: '11px 0', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 500 }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
-                    Continue with GitHub
-                  </button>
-                )}
-                {oidcConfigured && (
-                  <button
-                    onClick={startOidc}
-                    disabled={loading}
-                    style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8, padding: '11px 0', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 500, marginTop: githubConfigured ? 10 : 0 }}
-                  >
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="8" r="4"></circle><path d="M4 21v-1a8 8 0 0 1 16 0v1"></path></svg>
-                    Continue with SSO
-                  </button>
-                )}
+                <button
+                  onClick={startGitHub}
+                  disabled={loading}
+                  style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, background: C.surface, border: `1px solid ${C.border}`, color: C.text, borderRadius: 8, padding: '11px 0', cursor: loading ? 'not-allowed' : 'pointer', fontSize: 14, fontWeight: 500 }}
+                >
+                  <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path fillRule="evenodd" d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path></svg>
+                  Continue with GitHub
+                </button>
               </>
             )}
 
-            {!isReturning && (
+            {!oidcConfigured && !isReturning && (
               <p style={{ color: C.dim, fontSize: 12, textAlign: 'center', marginTop: 16 }}>
                 Already have an account? Just enter your email above.
               </p>

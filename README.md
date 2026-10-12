@@ -162,7 +162,7 @@ There is no built-in registration allowlist (no `ALLOWED_ADMIN_EMAILS` / `AUTH_W
 
 ### Developer portal SSO (OpenID Connect)
 
-Instead of email OTP codes, developers can sign in to the developer portal with any OpenID Connect provider (Keycloak, Authentik, Auth0, Okta, Azure AD, Dex, …). When configured, a "Continue with SSO" button appears on the portal sign-in page alongside the email-code flow.
+Instead of email OTP codes, developers can sign in to the developer portal with any OpenID Connect provider (Keycloak, Authentik, Auth0, Okta, Azure AD, Dex, …). **When OIDC is configured it is enforced as the only developer sign-in method** — the portal shows SSO instead of the email form, and the email-OTP API endpoints are disabled so the identity provider stays the single source of truth. When OIDC is not configured, the standard email-code flow is used.
 
 ```bash
 # In .env
@@ -177,6 +177,7 @@ Notes:
 - Register `OIDC_REDIRECT_URI` as an allowed redirect/callback URI in your provider's client settings. It points at the developer portal page itself (the page reads `?code&state` from the URL after redirect).
 - The provider must expose a standard `.well-known/openid-configuration` document and RS256- or ES256-signed ID tokens.
 - New developers are auto-provisioned on first SSO login (email must be returned by the provider); existing accounts are linked by email on first SSO sign-in.
+- Reviewer and admin logins are unaffected — OIDC enforcement applies to the developer portal only.
 - Restart the API after changing these values: `docker compose up -d`.
 
 ### Backup & Restore

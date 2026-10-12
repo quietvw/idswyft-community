@@ -188,6 +188,15 @@ const emailValidation = [
 ];
 
 // ─── OTP Flow ──────────────────────────────────────────────────────────────────
+// When OIDC SSO is configured for the developer portal, it is the ONLY
+// developer auth method: the email-OTP endpoints below are disabled so the
+// identity provider remains the single source of truth for authentication.
+
+function requireOtpAuthEnabled(): void {
+  if (oidc.isOidcConfigured()) {
+    throw new AuthenticationError('Email login is disabled — this deployment uses OIDC SSO. Sign in with SSO.');
+  }
+}
 
 // POST /api/auth/developer/otp/send — send a 6-digit code to the email
 router.post('/developer/otp/send',
@@ -195,6 +204,7 @@ router.post('/developer/otp/send',
   emailValidation,
   validate,
   catchAsync(async (req: Request, res: Response) => {
+    requireOtpAuthEnabled();
     const { email } = req.body;
 
     // Always return success to prevent email enumeration
@@ -221,6 +231,7 @@ router.post('/developer/otp/verify',
   ],
   validate,
   catchAsync(async (req: Request, res: Response) => {
+    requireOtpAuthEnabled();
     const { email, code } = req.body;
     const result = await verifyOtp(email, code);
 
@@ -276,6 +287,7 @@ router.post('/developer/otp/complete-registration',
   ],
   validate,
   catchAsync(async (req: Request, res: Response) => {
+    requireOtpAuthEnabled();
     const { registration_token, name, company } = req.body;
 
     // Verify the registration token
